@@ -1,0 +1,11 @@
+# Example environment.d snippet — this is what a package drops into
+# /overlayer/syshub/etc/environment.d/ to contribute environment variables,
+# instead of an /etc/profile.d/*.sh script. No shell is ever invoked to
+# apply it.
+#
+# Filename convention: NN-name.toml — files are applied in filename-sort
+# order, later files win on conflicting keys. This one uses "50-" as a
+# neutral middle prefix; a package that must run first uses "10-", one that
+# must override everything else uses "90-".
+
+JAVA_HOME = "/overlayer/zexlib/union/lib/jvm/current"

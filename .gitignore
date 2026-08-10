@@ -1,0 +1,11 @@
+/target/
+**/target/
+Cargo.lock.bak
+*.log
+.DS_Store
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+environment.toml

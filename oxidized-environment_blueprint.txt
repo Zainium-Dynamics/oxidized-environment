@@ -1,0 +1,15 @@
+Project Tree
+
+oxidized-environment/
+├── Cargo.lock
+├── Cargo.toml
+│
+├── crates/
+│   └── oxidized-environment-core/
+│       ├── Cargo.lock
+│       ├── Cargo.toml
+│       └── src/
+│           └── lib.rs
+│
+└── src/
+    └── main.rs
