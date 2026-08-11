@@ -25,16 +25,18 @@
 //! # Schema
 //!
 //! ```text
-//! <root>/etc/oxidized_environment/environment.toml       ← base table
-//! <root>/etc/oxidized_environment/environment.d/*.toml   ← overrides, filename order, later wins
+//! <root>/oxienv.toml   ← the one and only file this crate reads
 //! ```
 //!
 //! `<root>` is whatever path the caller passes to [`resolve`]/[`init`] —
-//! there is no compiled-in default. The [`ROOT_OVERRIDE_ENV`] name is a
-//! convention callers may choose to honor (the CLI does — see its own
-//! docs), not something this crate reads itself.
+//! there is no compiled-in default and no fixed subdirectory (no `etc/`
+//! baked in here); a caller that wants `/overlayer/syshub/oxienv/oxienv.toml`
+//! passes `/overlayer/syshub/oxienv` as `root`, a caller that wants
+//! `/etc/oxienv/oxienv.toml` passes `/etc/oxienv`. The [`ROOT_OVERRIDE_ENV`]
+//! name is a convention callers may choose to honor (the CLI does — see its
+//! own docs), not something this crate reads itself.
 //!
-//! Each TOML file may mix two shapes:
+//! The TOML file may mix two shapes:
 //!
 //! - **Bare keys, or a `[Profile]` table** — become env vars verbatim, case
 //!   preserved, no prefix. Use this for real env var names (`PATH`,
@@ -53,15 +55,8 @@
 //!   bindir = "/overlayer/syshub/bin"   # → env var PATH_SYSHUB_BINDIR
 //!   ```
 //!
-//! A package that needs to contribute environment variables (the one real
-//! use case profile.d snippets served) drops a flat TOML file into
-//! `environment.d/`:
-//!
-//! ```toml
-//! JAVA_HOME = "/overlayer/zexlib/union/lib/jvm/current"
-//! ```
-//!
-//! No shell is ever invoked to apply it. There is no `${VAR}`-style
+//! There is no override-directory extension point — one file, one source of
+//! truth. No shell is ever invoked to apply it. There is no `${VAR}`-style
 //! interpolation anywhere in this schema — every value is a literal,
 //! already-resolved string. A build script's `LDFLAGS`/`CFLAGS` (which
 //! typically reference other shell variables) must be written with those
@@ -69,7 +64,7 @@
 //!
 //! # No hidden fallback
 //!
-//! If `environment.toml` is missing or fails to parse, [`resolve`] returns
+//! If `oxienv.toml` is missing or fails to parse, [`resolve`] returns
 //! whatever it could load — an empty map in the worst case — never a
 //! compiled-in guess about what a "default" environment should contain. A
 //! consumer that needs a safety net for "file missing at boot" (e.g. a PID 1
@@ -89,25 +84,18 @@ use std::path::{Path, PathBuf};
 /// to the convention explicitly.
 pub const ROOT_OVERRIDE_ENV: &str = "OXIDIZED_ENVIRONMENT_ROOT";
 
-const ENV_FILE_REL: &str = "etc/oxidized_environment/environment.toml";
-const ENV_D_REL: &str = "etc/oxidized_environment/environment.d";
+const ENV_FILE_NAME: &str = "oxienv.toml";
 
 fn env_file(root: &Path) -> PathBuf {
-    root.join(ENV_FILE_REL)
-}
-
-fn env_d(root: &Path) -> PathBuf {
-    root.join(ENV_D_REL)
+    root.join(ENV_FILE_NAME)
 }
 
 /// Render `env` as flat `KEY = "value"` TOML text, header comment included.
 /// What [`init`] writes.
 pub fn render_toml(env: &[(&str, &str)]) -> String {
     let mut out = String::from(
-        "# environment.toml — managed by oxidized-environment\n\
-         # Every process on the system inherits this. Hand-edit freely.\n\
-         # Package-specific additions belong in environment.d/*.toml instead\n\
-         # of editing this file.\n\n",
+        "# oxienv.toml — managed by oxidized-environment\n\
+         # Every process on the system inherits this. Hand-edit freely.\n\n",
     );
     for (k, v) in env {
         out.push_str(&format!("{k} = {v:?}\n"));
@@ -138,19 +126,17 @@ pub struct VerifyReport {
 }
 
 impl VerifyReport {
-    /// True if every file that exists parsed cleanly. A missing
-    /// `environment.toml`/`environment.d` is not an error by itself — an
-    /// empty environment is a valid (if probably unintended) result.
+    /// True if `oxienv.toml` parsed cleanly (or doesn't exist — an empty
+    /// environment is a valid, if probably unintended, result).
     pub fn is_ok(&self) -> bool {
         self.errors.is_empty()
     }
 }
 
-/// Check every file [`resolve`] would read under `root`, without silently
-/// swallowing parse errors — the CLI's `verify` subcommand is this function.
-/// Returns which key came from which file, and every file that failed to
-/// parse (a bad `environment.d` snippet doesn't stop the rest from being
-/// checked).
+/// Check `oxienv.toml` under `root`, without silently swallowing parse
+/// errors — the CLI's default report is built on this function. Returns
+/// which key came from the file, and the parse error if it exists but isn't
+/// valid TOML.
 pub fn verify(root: &Path) -> VerifyReport {
     let mut report = VerifyReport::default();
 
@@ -166,30 +152,6 @@ pub fn verify(root: &Path) -> VerifyReport {
                 path: base.clone(),
                 message: parse_error_message(&base),
             }),
-        }
-    }
-
-    let dir = env_d(root);
-    if let Ok(entries) = fs::read_dir(&dir) {
-        let mut files: Vec<PathBuf> = entries
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| p.extension().is_some_and(|e| e == "toml"))
-            .collect();
-        files.sort();
-
-        for path in files {
-            match load_table(&path) {
-                Some(table) => {
-                    for (k, v) in table {
-                        report.resolved.insert(k, (v, path.clone()));
-                    }
-                }
-                None => report.errors.push(VerifyError {
-                    path: path.clone(),
-                    message: parse_error_message(&path),
-                }),
-            }
         }
     }
 
@@ -278,64 +240,31 @@ fn flatten_into(prefix: &str, value: &toml::Value, out: &mut HashMap<String, Str
     }
 }
 
-/// Scan `environment.d/*.toml` in filename order (later files win on
-/// conflicting keys). Missing directory is not an error — `environment.d`
-/// is an optional extension point, not a requirement. A file that fails to
-/// parse is skipped, not fatal — see [`verify`] to find out about those
-/// instead of silently losing them.
-fn load_environment_d(root: &Path) -> Vec<(String, String)> {
-    let dir = env_d(root);
-    let mut files: Vec<_> = match fs::read_dir(&dir) {
-        Ok(entries) => entries
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| p.extension().is_some_and(|e| e == "toml"))
-            .collect(),
-        Err(_) => return Vec::new(),
-    };
-    files.sort();
-
-    let mut out = Vec::new();
-    for path in files {
-        if let Some(table) = load_table(&path) {
-            out.extend(table);
-        }
-    }
-    out
-}
-
-/// Resolve the final environment for `root`: `environment.toml` merged with
-/// `environment.d/*.toml` overrides. Returns an empty map if nothing exists
-/// or nothing parses — no hidden fallback content. See the module docs'
-/// "No hidden fallback" section for why, and [`verify`] for surfacing parse
-/// errors this function silently skips past.
+/// Resolve the final environment for `root`: just `oxienv.toml`. Returns an
+/// empty map if it doesn't exist or doesn't parse — no hidden fallback
+/// content. See the module docs' "No hidden fallback" section for why, and
+/// [`verify`] for surfacing the parse error this function silently skips
+/// past.
 pub fn resolve(root: &Path) -> HashMap<String, String> {
-    let mut env = load_table(&env_file(root)).unwrap_or_default();
-
-    for (key, value) in load_environment_d(root) {
-        env.insert(key, value);
-    }
-
-    env
+    load_table(&env_file(root)).unwrap_or_default()
 }
 
 /// Result of [`init`], for callers that want to report what happened.
 #[derive(Debug, PartialEq, Eq)]
 pub enum InitAction {
-    /// `environment.toml` did not exist; `env` was written.
+    /// `oxienv.toml` did not exist; `env` was written.
     Created,
-    /// `environment.toml` already existed and `force` was not set; left
+    /// `oxienv.toml` already existed and `force` was not set; left
     /// untouched (an admin's hand edits are never silently clobbered).
     AlreadyExists,
-    /// `environment.toml` existed and was overwritten because `force` was set.
+    /// `oxienv.toml` existed and was overwritten because `force` was set.
     Overwritten,
 }
 
-/// Write `env` as a fresh `environment.toml` under `root`, creating
-/// `environment.d/` alongside it. `env` is supplied by the caller — this
-/// crate has no opinion about what a "default" environment should contain,
-/// only how to read and write one. Never overwrites an existing file unless
-/// `force` is set.
+/// Write `env` as a fresh `oxienv.toml` under `root`. `env` is supplied by
+/// the caller — this crate has no opinion about what a "default"
+/// environment should contain, only how to read and write one. Never
+/// overwrites an existing file unless `force` is set.
 pub fn init(root: &Path, env: &[(&str, &str)], force: bool) -> io::Result<InitAction> {
     write_env_file(root, force, || render_toml(env))
 }
@@ -368,12 +297,10 @@ fn write_env_file(
     render: impl FnOnce() -> String,
 ) -> io::Result<InitAction> {
     let file = env_file(root);
-    let d = env_d(root);
 
     if let Some(parent) = file.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::create_dir_all(&d)?;
 
     if file.exists() && !force {
         return Ok(InitAction::AlreadyExists);
@@ -471,39 +398,6 @@ mod tests {
     }
 
     #[test]
-    fn environment_d_overrides_base() {
-        let root = tempdir("override");
-        init(&root, SAMPLE_ENV, false).unwrap();
-        fs::create_dir_all(env_d(&root)).unwrap();
-        fs::write(
-            env_d(&root).join("50-custom.toml"),
-            "LANG = \"en_US.UTF-8\"\nJAVA_HOME = \"/overlayer/zexlib/union/lib/jvm\"\n",
-        )
-        .unwrap();
-
-        let env = resolve(&root);
-        assert_eq!(env.get("LANG").map(String::as_str), Some("en_US.UTF-8"));
-        assert_eq!(
-            env.get("JAVA_HOME").map(String::as_str),
-            Some("/overlayer/zexlib/union/lib/jvm")
-        );
-        // Untouched base keys survive
-        assert_eq!(env.get("EXAMPLE_VAR").map(String::as_str), Some("1"));
-    }
-
-    #[test]
-    fn environment_d_filename_order_later_wins() {
-        let root = tempdir("order");
-        init(&root, SAMPLE_ENV, false).unwrap();
-        fs::create_dir_all(env_d(&root)).unwrap();
-        fs::write(env_d(&root).join("10-a.toml"), "LANG = \"a\"\n").unwrap();
-        fs::write(env_d(&root).join("20-b.toml"), "LANG = \"b\"\n").unwrap();
-
-        let env = resolve(&root);
-        assert_eq!(env.get("LANG").map(String::as_str), Some("b"));
-    }
-
-    #[test]
     fn render_toml_parses_back_to_input() {
         let text = render_toml(SAMPLE_ENV);
         let table: toml::Table = text.parse().unwrap();
@@ -587,40 +481,26 @@ mod tests {
     }
 
     #[test]
-    fn verify_reports_broken_environment_d_file_without_aborting() {
+    fn verify_reports_broken_file_without_panicking() {
         let root = tempdir("verify-broken");
-        init(&root, SAMPLE_ENV, false).unwrap();
-        fs::create_dir_all(env_d(&root)).unwrap();
-        // Invalid TOML: bare key with no value (the exact bug this feature
-        // exists to catch).
-        fs::write(env_d(&root).join("10-broken.toml"), "UNION_DIR = \n").unwrap();
-        fs::write(env_d(&root).join("20-good.toml"), "LANG = \"C.UTF-8\"\n").unwrap();
+        fs::create_dir_all(&root).unwrap();
+        // Invalid TOML: bare key with no value.
+        fs::write(env_file(&root), "UNION_DIR = \n").unwrap();
 
         let report = verify(&root);
         assert!(!report.is_ok());
         assert_eq!(report.errors.len(), 1);
-        assert!(report.errors[0].path.ends_with("10-broken.toml"));
-        // The good file after the broken one is still checked
-        assert_eq!(
-            report.resolved.get("LANG").map(|(v, _)| v.as_str()),
-            Some("C.UTF-8")
-        );
+        assert!(report.errors[0].path.ends_with("oxienv.toml"));
     }
 
     #[test]
     fn verify_tracks_which_file_each_key_came_from() {
         let root = tempdir("verify-provenance");
         init(&root, SAMPLE_ENV, false).unwrap();
-        fs::create_dir_all(env_d(&root)).unwrap();
-        fs::write(
-            env_d(&root).join("50-override.toml"),
-            "PATH = \"/overridden\"\n",
-        )
-        .unwrap();
 
         let report = verify(&root);
         let (value, source) = report.resolved.get("PATH").unwrap();
-        assert_eq!(value, "/overridden");
-        assert!(source.ends_with("50-override.toml"));
+        assert_eq!(value, "/example/bin");
+        assert!(source.ends_with("oxienv.toml"));
     }
 }

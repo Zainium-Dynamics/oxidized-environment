@@ -8,4 +8,4 @@ Cargo.lock.bak
 *~
 .idea/
 .vscode/
-environment.toml
+oxienv.toml

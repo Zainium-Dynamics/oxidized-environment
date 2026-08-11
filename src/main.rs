@@ -1,200 +1,190 @@
-//! `oxidized-environment` — CLI for the native, TOML-based environment
-//! resolver (see `oxidized-environment-core` for the schema and the "why").
+//! `oxidized-environment` (`oxienv`) — the ZainiumOS environment auto
+//! handler. Replaces `/etc/profile.d`.
 //!
-//! Exists so anything that can spawn a process — an installer, a control
-//! CLI, a TOML service, a plain shell — can read, seed, or check the
-//! environment without linking Rust. A distro's PID 1 links
-//! `oxidized-environment-core` directly for the boot-critical path; this
-//! binary is for everyone else.
+//! Unlike `oxidized-environment-core` (which stays a generic, root-agnostic
+//! library any consumer can link with its own root — see `quantra` and
+//! `quantra-ctl`), this binary is Zainium-specific: it knows about
+//! `/overlayer/syshub` directly, so there's nothing to pass on every
+//! invocation.
 //!
-//! No path is hardcoded anywhere in this binary — `--root` has no compiled
-//! default, only the `OXIDIZED_ENVIRONMENT_ROOT` convention (opt-in, via
-//! `env =` below); `init` has no compiled-in "default environment" either —
-//! it copies content from `--from <file>`, which the caller supplies.
+//! Two flags total:
+//!
+//!   oxienv                    resolve + print a report + apply to self
+//!   oxienv --init              bootstrap oxienv.toml if it doesn't exist yet
+//!   oxienv --apply -- <cmd..>  exec cmd with the resolved environment applied
+//!
+//! Config file location is auto-detected, not passed:
+//!   - `/overlayer/syshub/etc/oxienv.toml` on a real ZainiumOS system —
+//!     config lives under `etc/` same as every other package (`apparmor`,
+//!     `passwd`, `resolv.conf`, ...)
+//!   - `/etc/oxienv.toml` on any other Linux host (lets this exact binary
+//!     be built and smoke-tested on a normal dev machine)
 
-use clap::{Parser, Subcommand};
+use clap::Parser;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+/// The Zainium default table `--init` seeds a fresh `oxienv.toml` from —
+/// mirrors `oxienv.toml.sample`. Owned here, not in the core crate: this
+/// binary is the Zainium-specific consumer that gets to have an opinion.
+const ZAINIUM_DEFAULTS: &[(&str, &str)] = &[
+    ("MUSL_TRIPLE", "x86_64-zainium-linux-musl"),
+    ("MUSL_SYSDIR", "/overlayer/syshub/x86_64-zainium-linux-musl"),
+    (
+        "MUSL_LIB",
+        "/overlayer/syshub/x86_64-zainium-linux-musl/lib",
+    ),
+    ("RELIBC_DIR", "/overlayer/syshub/lib"),
+    (
+        "ZAI_MUSL_LD",
+        "/overlayer/syshub/x86_64-zainium-linux-musl/lib/ld-musl-x86_64.so.1",
+    ),
+    ("ZAI_ENV", "1"),
+    ("ZAI_HYBRID", "musl+relibc"),
+    ("ZAI_NO_FHS", "1"),
+    (
+        "PATH",
+        "/overlayer/syshub/bin:/overlayer/syshub/sbin:/overlayer/syshub/x86_64-zainium-linux-musl/bin:/overlayer/zexlib/union/bin",
+    ),
+    (
+        "LD_LIBRARY_PATH",
+        "/overlayer/syshub/lib:/overlayer/syshub/x86_64-zainium-linux-musl/lib:/overlayer/zexlib/union/lib",
+    ),
+    ("LANG", "C.UTF-8"),
+    ("LC_ALL", "C.UTF-8"),
+];
+
 #[derive(Parser)]
 #[command(
-    name = "oxidized-environment",
+    name = "oxienv",
     version,
-    about = "Native, TOML-based environment resolver — the replacement for /etc/profile.d"
+    about = "ZainiumOS environment auto handler — the replacement for /etc/profile.d"
 )]
 struct Cli {
-    #[command(subcommand)]
-    command: Command,
+    /// Bootstrap oxienv.toml from the built-in Zainium defaults if it
+    /// doesn't exist yet. Never overwrites an existing file.
+    #[arg(long)]
+    init: bool,
+
+    /// Exec a command with the resolved environment applied instead of
+    /// applying it to this process. Everything after `--` is the command.
+    #[arg(long, requires = "apply_cmd")]
+    apply: bool,
+
+    #[arg(trailing_var_arg = true, hide = true)]
+    apply_cmd: Vec<String>,
 }
 
-#[derive(Subcommand)]
-enum Command {
-    /// Print the resolved environment.
-    Resolve {
-        /// Root to resolve against (no default — pass it, or set
-        /// OXIDIZED_ENVIRONMENT_ROOT)
-        #[arg(long, env = oxidized_environment::ROOT_OVERRIDE_ENV)]
-        root: PathBuf,
-        /// Output format
-        #[arg(long, value_enum, default_value_t = Format::Export)]
-        format: Format,
-    },
-    /// Seed a fresh environment.toml by copying it from a template file.
-    Init {
-        /// Root to write environment.toml under
-        #[arg(long, env = oxidized_environment::ROOT_OVERRIDE_ENV)]
-        root: PathBuf,
-        /// Template file to copy (validated as TOML first). This tool has
-        /// no built-in default content — the caller always supplies one.
-        #[arg(long)]
-        from: PathBuf,
-        /// Overwrite an existing environment.toml instead of leaving it alone
-        #[arg(long, default_value_t = false)]
-        force: bool,
-    },
-    /// Check environment.toml and every environment.d/*.toml file parse
-    /// cleanly, without applying anything. Exits non-zero if any do not.
-    Verify {
-        /// Root to verify
-        #[arg(long, env = oxidized_environment::ROOT_OVERRIDE_ENV)]
-        root: PathBuf,
-        /// Also print every resolved key and which file it came from
-        #[arg(long, default_value_t = false)]
-        verbose: bool,
-    },
-    /// Exec a command with the resolved environment applied.
-    Apply {
-        /// Root to resolve against
-        #[arg(long, env = oxidized_environment::ROOT_OVERRIDE_ENV)]
-        root: PathBuf,
-        /// Command and arguments to exec (after --)
-        #[arg(trailing_var_arg = true, required = true)]
-        command: Vec<String>,
-    },
-}
-
-#[derive(Copy, Clone, clap::ValueEnum)]
-enum Format {
-    /// KEY=value, one per line
-    Kv,
-    /// export KEY="value", one per line — `source`-able by a POSIX shell
-    Export,
-    /// JSON object
-    Json,
+/// Where `oxienv.toml` lives: configuration on ZainiumOS always lives under
+/// `etc/` (same as every other package's config — `apparmor`, `passwd`,
+/// `resolv.conf`, ...), so this is `/overlayer/syshub/etc/oxienv.toml` on a
+/// real ZainiumOS system, or `/etc/oxienv.toml` (the same convention, at
+/// the generic Linux root) on any other host — so this binary is buildable
+/// and testable on any Linux host, not just Zainium.
+fn oxienv_dir() -> PathBuf {
+    let zainium = Path::new("/overlayer/syshub");
+    if zainium.is_dir() {
+        zainium.join("etc")
+    } else {
+        PathBuf::from("/etc")
+    }
 }
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    let dir = oxienv_dir();
 
-    match cli.command {
-        Command::Resolve { root, format } => cmd_resolve(&root, format),
-        Command::Init { root, from, force } => cmd_init(&root, &from, force),
-        Command::Verify { root, verbose } => cmd_verify(&root, verbose),
-        Command::Apply { root, command } => cmd_apply(&root, command),
+    if cli.init {
+        return cmd_init(&dir);
     }
+    if cli.apply {
+        return cmd_apply(&dir, &cli.apply_cmd);
+    }
+    cmd_default(&dir)
 }
 
-fn cmd_resolve(root: &Path, format: Format) -> ExitCode {
-    let env = oxidized_environment::resolve(root);
-    let mut keys: Vec<_> = env.keys().collect();
-    keys.sort();
-
-    match format {
-        Format::Kv => {
-            for k in keys {
-                println!("{k}={}", env[k]);
-            }
-        }
-        Format::Export => {
-            for k in keys {
-                println!("export {k}={:?}", env[k]);
-            }
-        }
-        Format::Json => {
-            print!("{{");
-            for (i, k) in keys.iter().enumerate() {
-                if i > 0 {
-                    print!(",");
-                }
-                print!("{:?}:{:?}", k, env[*k]);
-            }
-            println!("}}");
-        }
-    }
-    ExitCode::SUCCESS
-}
-
-fn cmd_init(root: &Path, from: &Path, force: bool) -> ExitCode {
-    match oxidized_environment::init_from_file(root, from, force) {
+fn cmd_init(dir: &Path) -> ExitCode {
+    match oxidized_environment::init(dir, ZAINIUM_DEFAULTS, false) {
         Ok(oxidized_environment::InitAction::Created) => {
-            eprintln!(
-                "environment.toml created under {} (from {})",
-                root.display(),
-                from.display()
-            );
-            ExitCode::SUCCESS
-        }
-        Ok(oxidized_environment::InitAction::Overwritten) => {
-            eprintln!(
-                "environment.toml overwritten under {} (from {})",
-                root.display(),
-                from.display()
-            );
+            println!("oxienv: created {}", dir.join("oxienv.toml").display());
             ExitCode::SUCCESS
         }
         Ok(oxidized_environment::InitAction::AlreadyExists) => {
-            eprintln!(
-                "environment.toml already exists under {} (use --force to overwrite)",
-                root.display()
+            println!(
+                "oxienv: {} already exists, left untouched",
+                dir.join("oxienv.toml").display()
             );
             ExitCode::SUCCESS
         }
+        Ok(oxidized_environment::InitAction::Overwritten) => unreachable!("force is always false"),
         Err(e) => {
-            eprintln!("oxidized-environment init: {e}");
+            eprintln!("oxienv: init failed: {e}");
             ExitCode::FAILURE
         }
     }
 }
 
-fn cmd_verify(root: &Path, verbose: bool) -> ExitCode {
-    let report = oxidized_environment::verify(root);
+/// Default (no-flag) behavior: report what was found, then apply it to this
+/// process. Seeing the report *is* the confirmation that apply is about to
+/// do the right thing — no separate "just show me" flag needed.
+fn cmd_default(dir: &Path) -> ExitCode {
+    let file = dir.join("oxienv.toml");
+    let on_zainium = Path::new("/overlayer/syshub").is_dir();
 
-    if verbose {
-        let mut keys: Vec<_> = report.resolved.keys().collect();
-        keys.sort();
-        for k in keys {
-            let (value, source) = &report.resolved[k];
-            println!("{k}={value:?}  ({})", source.display());
+    println!(
+        "oxienv: {} ({})",
+        if on_zainium {
+            "ZainiumOS detected"
+        } else {
+            "not on ZainiumOS — using /etc fallback"
+        },
+        if on_zainium {
+            "/overlayer/syshub"
+        } else {
+            "/etc"
         }
-    }
+    );
+    println!(
+        "oxienv: config file: {} ({})",
+        file.display(),
+        if file.is_file() { "found" } else { "missing" }
+    );
 
-    if report.is_ok() {
-        eprintln!(
-            "verify: ok — {} key(s) resolved under {}",
-            report.resolved.len(),
-            root.display()
-        );
-        ExitCode::SUCCESS
-    } else {
+    let report = oxidized_environment::verify(dir);
+    if !report.errors.is_empty() {
         for err in &report.errors {
-            eprintln!("verify: {} — {}", err.path.display(), err.message);
+            eprintln!("oxienv: {}: {}", err.path.display(), err.message);
         }
-        eprintln!(
-            "verify: {} file(s) failed to parse under {}",
-            report.errors.len(),
-            root.display()
-        );
-        ExitCode::FAILURE
+        return ExitCode::FAILURE;
     }
+
+    let mut keys: Vec<_> = report.resolved.keys().collect();
+    keys.sort();
+    let width = keys.iter().map(|k| k.len()).max().unwrap_or(0);
+    println!("oxienv: {} key(s) resolved:", keys.len());
+    for k in &keys {
+        let (value, _) = &report.resolved[*k];
+        println!("  {:<width$}  {value}", k, width = width);
+    }
+
+    let env = oxidized_environment::resolve(dir);
+    for (k, v) in &env {
+        // SAFETY: single-threaded at this point in main(), no other code
+        // has spawned threads that could race on the environment.
+        unsafe { std::env::set_var(k, v) };
+    }
+    println!("oxienv: applied to this process");
+
+    ExitCode::SUCCESS
 }
 
 #[cfg(unix)]
-fn cmd_apply(root: &Path, command: Vec<String>) -> ExitCode {
+fn cmd_apply(dir: &Path, command: &[String]) -> ExitCode {
     use std::os::unix::process::CommandExt;
 
-    let env = oxidized_environment::resolve(root);
+    let env = oxidized_environment::resolve(dir);
     let Some((program, args)) = command.split_first() else {
-        eprintln!("oxidized-environment apply: no command given");
+        eprintln!("oxienv: --apply requires a command after --");
         return ExitCode::FAILURE;
     };
 
@@ -204,15 +194,15 @@ fn cmd_apply(root: &Path, command: Vec<String>) -> ExitCode {
         .env_clear()
         .envs(&env)
         .exec();
-    eprintln!("oxidized-environment apply: exec {program}: {err}");
+    eprintln!("oxienv: exec {program}: {err}");
     ExitCode::FAILURE
 }
 
 #[cfg(not(unix))]
-fn cmd_apply(root: &Path, command: Vec<String>) -> ExitCode {
-    let env = oxidized_environment::resolve(root);
+fn cmd_apply(dir: &Path, command: &[String]) -> ExitCode {
+    let env = oxidized_environment::resolve(dir);
     let Some((program, args)) = command.split_first() else {
-        eprintln!("oxidized-environment apply: no command given");
+        eprintln!("oxienv: --apply requires a command after --");
         return ExitCode::FAILURE;
     };
 
@@ -225,7 +215,7 @@ fn cmd_apply(root: &Path, command: Vec<String>) -> ExitCode {
         Ok(status) if status.success() => ExitCode::SUCCESS,
         Ok(_) => ExitCode::FAILURE,
         Err(e) => {
-            eprintln!("oxidized-environment apply: exec {program}: {e}");
+            eprintln!("oxienv: exec {program}: {e}");
             ExitCode::FAILURE
         }
     }

@@ -8,7 +8,7 @@ edition = "2024"
 rust-version = "1.97"
 license = "MIT"
 authors = ["Ali Zain <alizain.x404@gmail.com>"]
-description = "Zainium OS environment resolver — CLI. One schema, one binary: zainium-installer, quantra-ctl, and zex read/write environment.toml through this without linking Rust. quantra (PID 1) links oxidized-environment-core directly instead — this crate's clap dependency has no business in a boot-critical binary."
+description = "Zainium OS environment resolver — CLI. One schema (oxienv.toml), one binary: anything that can't link Rust reads/writes it through this. quantra (PID 1) and quantra-ctl link oxidized-environment-core directly instead — this crate's clap dependency has no business in a boot-critical binary."
 keywords = ["zainium", "environment", "init", "profile"]
 categories = ["os", "config"]
 

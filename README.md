@@ -41,14 +41,17 @@ belongs to the CLI's `[[bin]]` target and never enters that build graph.
 ## On-disk schema
 
 ```
-<root>/etc/oxidized_environment/environment.toml       ← base table
-<root>/etc/oxidized_environment/environment.d/*.toml   ← overrides, filename order, later wins
+<root>/oxienv.toml   ← the one and only file this crate reads
 ```
 
 `<root>` is whatever path the caller passes to `resolve()`/`init()` — there
-is **no compiled-in default anywhere in this crate**. `ROOT_OVERRIDE_ENV`
-(`OXIDIZED_ENVIRONMENT_ROOT`) is just a name this crate exports as a
-convention callers may opt into (the CLI does); the library never reads it
+is **no compiled-in default anywhere in this crate**. A caller that wants
+`/overlayer/syshub/etc/oxienv.toml` (config lives under `etc/`, same as
+every other package) passes `/overlayer/syshub/etc` as `root`; a caller
+that wants `/etc/oxienv.toml` (the `oxienv` CLI's fallback when it isn't
+running on a real ZainiumOS system — see below) passes `/etc`.
+`ROOT_OVERRIDE_ENV` (`OXIDIZED_ENVIRONMENT_ROOT`) is just a name this crate
+exports as a convention callers may opt into; the library never reads it
 itself.
 
 ### Two ways to write a key, in the same file
@@ -93,33 +96,14 @@ There is no `${VAR}`-style expansion anywhere in this schema — every value
 is a literal, already-resolved string. A build script's `LDFLAGS`/`CFLAGS`
 (which typically reference other shell variables, e.g.
 `-Wl,-rpath=${RUNTIME_PREFIX}/lib`) must have those references expanded to
-concrete paths *before* landing in `environment.toml`. This is deliberate:
+concrete paths *before* landing in `oxienv.toml`. This is deliberate:
 adding a template engine would mean parsing arbitrary expressions at
 boot-time, in PID 1, for no benefit a flat literal string doesn't already
 give you.
 
-### Package extension point
-
-A package that needs to contribute environment variables (the one real use
-case profile.d snippets served) drops a flat TOML file into
-`environment.d/`, filename-prefixed to control ordering:
-
-```toml
-# environment.d/50-example-package.toml
-JAVA_HOME = "/overlayer/zexlib/union/lib/jvm/current"
-```
-
-No shell is ever invoked to apply it. `resolve()` reads `environment.toml`
-first, then every `environment.d/*.toml` file in filename order, later files
-winning on conflicting keys. This is also where the boundary with a package
-manager sits: `oxidized-environment` only reads whatever `.toml` files exist
-in `environment.d/` — it has no concept of "a package" and never will.
-Deciding what to drop there (and cleaning it up on uninstall) is a package
-manager's job (`zex`, on Zainium), not this crate's.
-
 ### No hidden fallback
 
-If `environment.toml` is missing or fails to parse, `resolve()` returns
+If `oxienv.toml` is missing or fails to parse, `resolve()` returns
 whatever it could load — an empty map in the worst case, **never** a
 compiled-in guess about what a "default" environment should contain. A
 consumer that needs a safety net for "file missing at boot" (a PID 1 that
@@ -128,38 +112,38 @@ merges it in only for keys `resolve()` came back missing. See `quantra`'s
 `environment.rs` for a worked example — its `BOOT_FALLBACK` constant is
 Zainium's, not this crate's.
 
-## Sample files
+## Sample file
 
-- [`environment.toml.sample`](./environment.toml.sample) — an example base
-  table (Zainium's, for illustration — this crate ships no default of its
-  own).
-- [`environment.d.sample/50-example-package.toml`](./environment.d.sample/50-example-package.toml)
-  — a worked example of the extension-point mechanism.
+- [`oxienv.toml.sample`](./oxienv.toml.sample) — an example table
+  (Zainium's, for illustration — this crate ships no default of its own).
 
-## CLI
+## CLI (`oxienv`)
+
+Unlike the library crate, the CLI binary **is** Zainium-specific — it's the
+one consumer in this repo allowed to have an opinion about where things
+live, since it's the thing everything else that can't link Rust actually
+runs. Two flags total, no `--root`:
 
 ```sh
-# Print the resolved environment
-oxidized-environment resolve --root <path> [--format export|kv|json]
-
-# Seed a fresh environment.toml by copying a template file (validated first)
-oxidized-environment init --root <path> --from <template.toml> [--force]
-
-# Check environment.toml + every environment.d/*.toml parses cleanly,
-# without applying anything. Exits non-zero if any don't; --verbose prints
-# every resolved key and which file it came from.
-oxidized-environment verify --root <path> [--verbose]
-
-# Exec a command with the resolved environment applied
-oxidized-environment apply --root <path> -- <command> [args...]
+oxienv                     # resolve + print a report + apply to this process
+oxienv --init              # bootstrap oxienv.toml from the built-in Zainium
+                            #   defaults, if it doesn't exist yet (never
+                            #   overwrites an existing file)
+oxienv --apply -- <cmd..>  # exec cmd with the resolved environment applied
 ```
 
-`--root` has **no compiled-in default** — pass it, or set
-`OXIDIZED_ENVIRONMENT_ROOT`. Omitting both is a clap usage error, not a
-silent guess. `init` has no compiled-in content either: `--from` is
-required, and the file it points to is validated as TOML before anything is
-written — a bad template fails loudly instead of writing a broken
-`environment.toml`.
+The config file location is auto-detected, not passed in:
+
+- `/overlayer/syshub/etc/oxienv.toml` if `/overlayer/syshub` exists (a real
+  ZainiumOS system) — config lives under `etc/`, same as every other package
+- `/etc/oxienv.toml` otherwise — lets this exact binary be built and
+  smoke-tested on any ordinary Linux dev machine, no Zainium disk required
+
+The default (no-flag) run prints which mode was detected, the exact file
+path checked and whether it was found, every resolved key sorted with its
+value, and then applies the environment to itself — seeing the report *is*
+the confirmation that apply is about to do the right thing, so there's no
+separate "just show me" flag.
 
 ## Library API
 
@@ -167,7 +151,7 @@ written — a bad template fails loudly instead of writing a broken
 use std::path::Path;
 
 // A distro's PID 1, at the very start of main(), before anything is spawned:
-let env = oxidized_environment::resolve(Path::new("/overlayer/syshub"));
+let env = oxidized_environment::resolve(Path::new("/overlayer/syshub/etc"));
 for (k, v) in env {
     std::env::set_var(k, v); // unsafe in newer Rust editions — see quantra's environment.rs
 }
@@ -194,7 +178,7 @@ if !report.is_ok() {
 |---|---|---|
 | `quantra` (PID 1) | `oxidized-environment-core` (library) | Boot-critical — no subprocess, no `clap` in the build graph. Owns its own root constant and boot-safety fallback table. |
 | `quantra-ctl` | `oxidized-environment-core` (library) | `quantra-ctl env` reads straight from disk, works even if `quantra` isn't running. Owns its own root constant. |
-| `zainium-installer` | `oxidized-environment-core` (library) | Seeds `environment.toml` on a fresh disk via `init()`, passing its own default table. |
+| `zainium-installer` | `oxidized-environment-core` (library) | Seeds `oxienv.toml` on a fresh disk via `init()`, passing its own default table. |
 | Anything else | `oxidized-environment` (CLI binary) | No Rust linking required. |
 
 Every one of these consumers is Zainium-specific and is where Zainium's
