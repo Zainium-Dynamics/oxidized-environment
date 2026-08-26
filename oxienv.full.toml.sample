@@ -1,0 +1,52 @@
+[Profile]
+MUSL_TRIPLE = "x86_64-zainium-linux-musl"
+MUSL_SYSDIR = "/overlayer/syshub/x86_64-zainium-linux-musl"
+MUSL_LIB = "/overlayer/syshub/x86_64-zainium-linux-musl/lib"
+MUSL_LD = "/overlayer/syshub/x86_64-zainium-linux-musl/lib/ld-musl-x86_64.so.1"
+OXIDIZED_ENV = "1"
+NO_FHS = "1"
+RESOLVED_SH = "/overlayer/syshub/bin/sh"
+PATH = "/overlayer/syshub/bin:/overlayer/syshub/sbin:/overlayer/syshub/x86_64-zainium-linux-musl/bin:/overlayer/zexlib/union/bin"
+LD_LIBRARY_PATH = "/overlayer/syshub/lib:/overlayer/syshub/x86_64-zainium-linux-musl/lib:/overlayer/zexlib/union/lib"
+LANG = "C.UTF-8"
+LC_ALL = "C.UTF-8"
+
+[Path.Syshub]
+prefix = "/overlayer/syshub"
+bindir = "/overlayer/syshub/bin"
+sbindir = "/overlayer/syshub/sbin"
+libdir = "/overlayer/syshub/lib"
+libexecdir = "/overlayer/syshub/libexec"
+includedir = "/overlayer/syshub/include"
+sharedir = "/overlayer/syshub/share"
+conf_dir = "/overlayer/syshub/etc"
+drivers_dir = "/overlayer/syshub/drivers"
+engine_dir = "/overlayer/syshub/engine"
+
+[Path.Syshub.Musl]
+prefix = "/overlayer/syshub/x86_64-zainium-linux-musl"
+bindir = "/overlayer/syshub/x86_64-zainium-linux-musl/bin"
+sbindir = "/overlayer/syshub/x86_64-zainium-linux-musl/sbin"
+libdir = "/overlayer/syshub/x86_64-zainium-linux-musl/lib"
+includedir = "/overlayer/syshub/x86_64-zainium-linux-musl/include"
+sharedir = "/overlayer/syshub/x86_64-zainium-linux-musl/share"
+
+[Path.Zexlib]
+prefix = "/overlayer/zexlib"
+registry_dir = "/overlayer/zexlib/registry"
+union_dir = "/overlayer/zexlib/union"
+
+[Path.Zexlib.Registry]
+packages_toml = "/overlayer/zexlib/registry/packages.toml"
+installed_dir = "/overlayer/zexlib/registry/installed"
+
+[Path.Zexlib.Union]
+bindir = "/overlayer/zexlib/union/bin"
+sbindir = "/overlayer/zexlib/union/sbin"
+libdir = "/overlayer/zexlib/union/lib"
+libexecdir = "/overlayer/zexlib/union/libexec"
+includedir = "/overlayer/zexlib/union/include"
+sharedir = "/overlayer/zexlib/union/share"
+confdir = "/overlayer/zexlib/union/etc"
+vardir = "/overlayer/zexlib/union/var"
+tmpdir = "/overlayer/zexlib/union/tmp"

@@ -1,11 +1,9 @@
 //! `oxidized-environment` (`oxienv`) — the ZainiumOS environment auto
 //! handler. Replaces `/etc/profile.d`.
 //!
-//! Unlike `oxidized-environment-core` (which stays a generic, root-agnostic
-//! library any consumer can link with its own root — see `quantra` and
-//! `quantra-ctl`), this binary is Zainium-specific: it knows about
-//! `/overlayer/syshub` directly, so there's nothing to pass on every
-//! invocation.
+//! Zainium-specific (unlike the root-agnostic `oxidized-environment-core`
+//! library): knows about `/overlayer/syshub` directly, so nothing needs to
+//! be passed on every invocation.
 //!
 //! Two flags total:
 //!
@@ -13,20 +11,18 @@
 //!   oxienv --init              bootstrap oxienv.toml if it doesn't exist yet
 //!   oxienv --apply -- <cmd..>  exec cmd with the resolved environment applied
 //!
-//! Config file location is auto-detected, not passed:
-//!   - `/overlayer/syshub/etc/oxienv.toml` on a real ZainiumOS system —
-//!     config lives under `etc/` same as every other package (`apparmor`,
-//!     `passwd`, `resolv.conf`, ...)
-//!   - `/etc/oxienv.toml` on any other Linux host (lets this exact binary
-//!     be built and smoke-tested on a normal dev machine)
+//! Config file location is auto-detected:
+//!   - `/overlayer/syshub/etc/oxidized-environment/oxienv.toml` on a real
+//!     ZainiumOS system
+//!   - `/etc/oxidized-environment/oxienv.toml` otherwise (any other Linux
+//!     host, for building/testing off-Zainium)
 
 use clap::Parser;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 /// The Zainium default table `--init` seeds a fresh `oxienv.toml` from —
-/// mirrors `oxienv.toml.sample`. Owned here, not in the core crate: this
-/// binary is the Zainium-specific consumer that gets to have an opinion.
+/// mirrors `oxienv.toml.sample`.
 const ZAINIUM_DEFAULTS: &[(&str, &str)] = &[
     ("MUSL_TRIPLE", "x86_64-zainium-linux-musl"),
     ("MUSL_SYSDIR", "/overlayer/syshub/x86_64-zainium-linux-musl"),
@@ -60,13 +56,13 @@ const ZAINIUM_DEFAULTS: &[(&str, &str)] = &[
     about = "ZainiumOS environment auto handler — the replacement for /etc/profile.d"
 )]
 struct Cli {
-    /// Bootstrap oxienv.toml from the built-in Zainium defaults if it
-    /// doesn't exist yet. Never overwrites an existing file.
+    /// Bootstrap oxienv.toml from the built-in defaults if it doesn't
+    /// exist yet. Never overwrites an existing file.
     #[arg(long)]
     init: bool,
 
     /// Exec a command with the resolved environment applied instead of
-    /// applying it to this process. Everything after `--` is the command.
+    /// applying it to this process.
     #[arg(long, requires = "apply_cmd")]
     apply: bool,
 
@@ -74,19 +70,16 @@ struct Cli {
     apply_cmd: Vec<String>,
 }
 
-/// Where `oxienv.toml` lives: configuration on ZainiumOS always lives under
-/// `etc/` (same as every other package's config — `apparmor`, `passwd`,
-/// `resolv.conf`, ...), so this is `/overlayer/syshub/etc/oxienv.toml` on a
-/// real ZainiumOS system, or `/etc/oxienv.toml` (the same convention, at
-/// the generic Linux root) on any other host — so this binary is buildable
-/// and testable on any Linux host, not just Zainium.
+/// Where `oxienv.toml` lives — see the module docs for the two paths this
+/// resolves to.
 fn oxienv_dir() -> PathBuf {
     let zainium = Path::new("/overlayer/syshub");
-    if zainium.is_dir() {
+    let etc = if zainium.is_dir() {
         zainium.join("etc")
     } else {
         PathBuf::from("/etc")
-    }
+    };
+    etc.join("oxidized-environment")
 }
 
 fn main() -> ExitCode {
@@ -123,9 +116,7 @@ fn cmd_init(dir: &Path) -> ExitCode {
     }
 }
 
-/// Default (no-flag) behavior: report what was found, then apply it to this
-/// process. Seeing the report *is* the confirmation that apply is about to
-/// do the right thing — no separate "just show me" flag needed.
+/// Default (no-flag) behavior: report what was found, then apply it.
 fn cmd_default(dir: &Path) -> ExitCode {
     let file = dir.join("oxienv.toml");
     let on_zainium = Path::new("/overlayer/syshub").is_dir();

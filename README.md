@@ -46,10 +46,12 @@ belongs to the CLI's `[[bin]]` target and never enters that build graph.
 
 `<root>` is whatever path the caller passes to `resolve()`/`init()` — there
 is **no compiled-in default anywhere in this crate**. A caller that wants
-`/overlayer/syshub/etc/oxienv.toml` (config lives under `etc/`, same as
-every other package) passes `/overlayer/syshub/etc` as `root`; a caller
-that wants `/etc/oxienv.toml` (the `oxienv` CLI's fallback when it isn't
-running on a real ZainiumOS system — see below) passes `/etc`.
+`/overlayer/syshub/etc/oxidized-environment/oxienv.toml` (its own
+subdirectory of `etc/`, not loose in `etc/` itself) passes
+`/overlayer/syshub/etc/oxidized-environment` as `root`; a caller that wants
+`/etc/oxidized-environment/oxienv.toml` (the `oxienv` CLI's fallback when it
+isn't running on a real ZainiumOS system — see below) passes
+`/etc/oxidized-environment`.
 `ROOT_OVERRIDE_ENV` (`OXIDIZED_ENVIRONMENT_ROOT`) is just a name this crate
 exports as a convention callers may opt into; the library never reads it
 itself.
@@ -112,10 +114,14 @@ merges it in only for keys `resolve()` came back missing. See `quantra`'s
 `environment.rs` for a worked example — its `BOOT_FALLBACK` constant is
 Zainium's, not this crate's.
 
-## Sample file
+## Sample files
 
-- [`oxienv.toml.sample`](./oxienv.toml.sample) — an example table
-  (Zainium's, for illustration — this crate ships no default of its own).
+- [`oxienv.toml.sample`](./oxienv.toml.sample) — Zainium's flat `[Profile]`
+  defaults, for illustration (this crate ships no default of its own).
+- [`oxienv.full.toml.sample`](./oxienv.full.toml.sample) — the complete
+  path table: every `union`/`syshub`/musl-toolchain directory (`bin`,
+  `sbin`, `lib`, `include`, `share`) populated, no commentary, ready to
+  seed a fresh install.
 
 ## CLI (`oxienv`)
 
@@ -134,10 +140,12 @@ oxienv --apply -- <cmd..>  # exec cmd with the resolved environment applied
 
 The config file location is auto-detected, not passed in:
 
-- `/overlayer/syshub/etc/oxienv.toml` if `/overlayer/syshub` exists (a real
-  ZainiumOS system) — config lives under `etc/`, same as every other package
-- `/etc/oxienv.toml` otherwise — lets this exact binary be built and
-  smoke-tested on any ordinary Linux dev machine, no Zainium disk required
+- `/overlayer/syshub/etc/oxidized-environment/oxienv.toml` if
+  `/overlayer/syshub` exists (a real ZainiumOS system) — its own
+  subdirectory of `etc/`, not loose in `etc/` itself
+- `/etc/oxidized-environment/oxienv.toml` otherwise — lets this exact binary
+  be built and smoke-tested on any ordinary Linux dev machine, no Zainium
+  disk required
 
 The default (no-flag) run prints which mode was detected, the exact file
 path checked and whether it was found, every resolved key sorted with its
@@ -151,7 +159,7 @@ separate "just show me" flag.
 use std::path::Path;
 
 // A distro's PID 1, at the very start of main(), before anything is spawned:
-let env = oxidized_environment::resolve(Path::new("/overlayer/syshub/etc"));
+let env = oxidized_environment::resolve(Path::new("/overlayer/syshub/etc/oxidized-environment"));
 for (k, v) in env {
     std::env::set_var(k, v); // unsafe in newer Rust editions — see quantra's environment.rs
 }

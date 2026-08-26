@@ -1,26 +1,14 @@
 //! oxidized-environment — a native, TOML-based replacement for `/etc/profile.d`.
 //!
-//! # Why this exists
+//! `/etc/profile.d/*.sh` only reaches interactive login shells, so every
+//! other process tree (services, sessions started some other way) has to
+//! re-derive the same variables by hand. This crate fixes that: **zero**
+//! hardcoded paths, distro names, or default values — every caller passes
+//! its own root explicitly, and owns its own defaults in its own source.
 //!
-//! Traditional `/etc/profile.d/*.sh` only reaches interactive login shells
-//! (bash/zsh source it — nothing else does), so every other process tree —
-//! services, sessions started some other way — has to re-derive the same
-//! variables by hand.
-//!
-//! This crate carries **zero** hardcoded paths, distro names, or default
-//! values — no compiled-in root, no compiled-in fallback table. It doesn't
-//! know what "syshub", "quantra", or "Zainium" mean, doesn't parse any other
-//! tool's config, and depends on nothing but `toml`. Every caller supplies
-//! its own root explicitly; a distro-specific consumer (like `quantra`,
-//! ZainiumOS's PID 1) owns its own defaults in its own source, not here.
-//! That's what makes this a library any Linux distro's init system could
-//! link, not a Zainium stub with a generic name.
-//!
-//! It is both a library — a PID 1 links it directly and calls [`resolve`]
-//! once at boot with its own root, no subprocess, no shell — and (via the
-//! separate `oxidized-environment` CLI crate) a binary, so an installer, a
-//! control CLI, or a plain shell script can call `oxidized-environment
-//! resolve` / `init` / `verify` without linking Rust at all.
+//! It's both a library (a PID 1 links it and calls [`resolve`] at boot, no
+//! subprocess, no shell) and, via the separate `oxidized-environment` CLI
+//! crate, a binary anything else can call without linking Rust.
 //!
 //! # Schema
 //!
@@ -28,50 +16,39 @@
 //! <root>/oxienv.toml   ← the one and only file this crate reads
 //! ```
 //!
-//! `<root>` is whatever path the caller passes to [`resolve`]/[`init`] —
-//! there is no compiled-in default and no fixed subdirectory (no `etc/`
-//! baked in here); a caller that wants `/overlayer/syshub/oxienv/oxienv.toml`
-//! passes `/overlayer/syshub/oxienv` as `root`, a caller that wants
-//! `/etc/oxienv/oxienv.toml` passes `/etc/oxienv`. The [`ROOT_OVERRIDE_ENV`]
-//! name is a convention callers may choose to honor (the CLI does — see its
-//! own docs), not something this crate reads itself.
+//! `<root>` is whatever path the caller passes to [`resolve`]/[`init`] — no
+//! compiled-in default, no fixed subdirectory. [`ROOT_OVERRIDE_ENV`] is a
+//! naming convention callers may opt into (the CLI does); this crate never
+//! reads it itself.
 //!
 //! The TOML file may mix two shapes:
 //!
 //! - **Bare keys, or a `[Profile]` table** — become env vars verbatim, case
-//!   preserved, no prefix. Use this for real env var names (`PATH`,
-//!   `LD_LIBRARY_PATH`, ...) — the two forms are identical, `[Profile]` is
-//!   just a heading to organize the file under:
+//!   preserved, no prefix (the two forms are identical):
 //!   ```toml
 //!   [Profile]
 //!   PATH = "/overlayer/syshub/bin"
 //!   ```
 //! - **Any other table, at any nesting depth** — flattened into one env var
 //!   per string leaf, named by joining every segment down to the leaf key
-//!   with `_` and upper-casing. Use this for organized reference data that
-//!   would collide with real env var names if left bare:
+//!   with `_` and upper-casing:
 //!   ```toml
 //!   [Path.Syshub]
 //!   bindir = "/overlayer/syshub/bin"   # → env var PATH_SYSHUB_BINDIR
 //!   ```
 //!
-//! There is no override-directory extension point — one file, one source of
-//! truth. No shell is ever invoked to apply it. There is no `${VAR}`-style
-//! interpolation anywhere in this schema — every value is a literal,
-//! already-resolved string. A build script's `LDFLAGS`/`CFLAGS` (which
-//! typically reference other shell variables) must be written with those
-//! references expanded to concrete paths before landing in this file.
+//! No override-directory extension point, no shell invoked to apply it, and
+//! no `${VAR}`-style interpolation — every value is a literal, already
+//! resolved string.
 //!
 //! # No hidden fallback
 //!
 //! If `oxienv.toml` is missing or fails to parse, [`resolve`] returns
-//! whatever it could load — an empty map in the worst case — never a
-//! compiled-in guess about what a "default" environment should contain. A
-//! consumer that needs a safety net for "file missing at boot" (e.g. a PID 1
-//! that must never start with an empty `PATH`) owns that fallback table
-//! itself and merges it in only if `resolve` comes back missing keys it
-//! considers required. See [`verify`] for checking a file is well-formed
-//! *before* relying on it.
+//! whatever it could load — an empty map in the worst case, never a
+//! compiled-in guess. A consumer that needs a safety net (e.g. a PID 1 that
+//! must never start with an empty `PATH`) owns that fallback table itself
+//! and merges it in only for keys [`resolve`] came back missing. See
+//! [`verify`] for checking a file is well-formed first.
 
 use std::collections::HashMap;
 use std::fs;
@@ -112,11 +89,8 @@ pub struct VerifyError {
     pub message: String,
 }
 
-/// Result of [`verify`]: every key that would be in [`resolve`]'s output,
-/// plus which file contributed it last, and every file that failed to parse
-/// along the way (parse failures don't stop verification — every other file
-/// is still checked and reported, matching how `resolve` silently skips a
-/// bad file rather than aborting).
+/// Result of [`verify`]: every key [`resolve`]'s output would contain, plus
+/// which file it came from, and every parse failure along the way.
 #[derive(Debug, Default)]
 pub struct VerifyReport {
     /// Key → (value, path of the file it came from).
@@ -133,10 +107,8 @@ impl VerifyReport {
     }
 }
 
-/// Check `oxienv.toml` under `root`, without silently swallowing parse
-/// errors — the CLI's default report is built on this function. Returns
-/// which key came from the file, and the parse error if it exists but isn't
-/// valid TOML.
+/// Check `oxienv.toml` under `root` without silently swallowing parse
+/// errors — the CLI's default report is built on this.
 pub fn verify(root: &Path) -> VerifyReport {
     let mut report = VerifyReport::default();
 
