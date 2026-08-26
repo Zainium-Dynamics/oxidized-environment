@@ -36,13 +36,13 @@ const ZAINIUM_DEFAULTS: &[(&str, &str)] = &[
     ),
     ("RELIBC_DIR", "/overlayer/syshub/lib"),
     (
-        "ZAI_MUSL_LD",
+        "MUSL_LD",
         "/overlayer/syshub/x86_64-zainium-linux-musl/lib/ld-musl-x86_64.so.1",
     ),
-    ("ZAI_ENV", "1"),
-    ("ZAI_HYBRID", "musl+relibc"),
-    ("ZAI_NO_FHS", "1"),
-    ("ZAI_SH", "/overlayer/syshub/bin/sh"),
+    ("OXIDIZED_ENV", "1"),
+    ("LIBC_HYBRID", "musl+relibc"),
+    ("NO_FHS", "1"),
+    ("RESOLVED_SH", "/overlayer/syshub/bin/sh"),
     (
         "PATH",
         "/overlayer/syshub/bin:/overlayer/syshub/sbin:/overlayer/syshub/x86_64-zainium-linux-musl/bin:/overlayer/zexlib/union/bin",
