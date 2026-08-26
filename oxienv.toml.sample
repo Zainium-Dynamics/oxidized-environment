@@ -7,10 +7,8 @@
 MUSL_TRIPLE = "x86_64-zainium-linux-musl"
 MUSL_SYSDIR = "/overlayer/syshub/x86_64-zainium-linux-musl"
 MUSL_LIB = "/overlayer/syshub/x86_64-zainium-linux-musl/lib"
-RELIBC_DIR = "/overlayer/syshub/lib"
 MUSL_LD = "/overlayer/syshub/x86_64-zainium-linux-musl/lib/ld-musl-x86_64.so.1"
 OXIDIZED_ENV = "1"
-LIBC_HYBRID = "musl+relibc"
 NO_FHS = "1"
 # The one canonical, resolved path to `sh` — anything that generates a
 # shebang or execs a shell script explicitly should read this instead of
