@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 /// The Zainium default table `--init` seeds a fresh `oxienv.toml` from —
-/// mirrors `oxienv.toml.sample`.
+/// mirrors `etc/oxidized-environment/oxienv.toml`.
 const ZAINIUM_DEFAULTS: &[(&str, &str)] = &[
     ("MUSL_TRIPLE", "x86_64-zainium-linux-musl"),
     ("MUSL_SYSDIR", "/overlayer/syshub/x86_64-zainium-linux-musl"),

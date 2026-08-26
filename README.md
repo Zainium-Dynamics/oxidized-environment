@@ -114,14 +114,14 @@ merges it in only for keys `resolve()` came back missing. See `quantra`'s
 `environment.rs` for a worked example — its `BOOT_FALLBACK` constant is
 Zainium's, not this crate's.
 
-## Sample files
+## Sample file
 
-- [`oxienv.toml.sample`](./oxienv.toml.sample) — Zainium's flat `[Profile]`
-  defaults, for illustration (this crate ships no default of its own).
-- [`oxienv.full.toml.sample`](./oxienv.full.toml.sample) — the complete
-  path table: every `union`/`syshub`/musl-toolchain directory (`bin`,
-  `sbin`, `lib`, `include`, `share`) populated, no commentary, ready to
-  seed a fresh install.
+- [`etc/oxidized-environment/oxienv.toml`](./etc/oxidized-environment/oxienv.toml)
+  — the complete path table: every `union`/`syshub`/musl-toolchain
+  directory (`bin`, `sbin`, `lib`, `include`, `share`, ...) populated, no
+  commentary, laid out exactly where the `oxienv` CLI expects to find it
+  on a real host — ready to seed a fresh install (this crate ships no
+  default of its own).
 
 ## CLI (`oxienv`)
 

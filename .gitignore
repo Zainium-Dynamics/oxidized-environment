@@ -9,3 +9,4 @@ Cargo.lock.bak
 .idea/
 .vscode/
 oxienv.toml
+!/etc/oxidized-environment/oxienv.toml
