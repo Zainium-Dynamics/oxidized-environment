@@ -42,6 +42,7 @@ const ZAINIUM_DEFAULTS: &[(&str, &str)] = &[
     ("ZAI_ENV", "1"),
     ("ZAI_HYBRID", "musl+relibc"),
     ("ZAI_NO_FHS", "1"),
+    ("ZAI_SH", "/overlayer/syshub/bin/sh"),
     (
         "PATH",
         "/overlayer/syshub/bin:/overlayer/syshub/sbin:/overlayer/syshub/x86_64-zainium-linux-musl/bin:/overlayer/zexlib/union/bin",

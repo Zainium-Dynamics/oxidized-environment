@@ -12,6 +12,10 @@ ZAI_MUSL_LD = "/overlayer/syshub/x86_64-zainium-linux-musl/lib/ld-musl-x86_64.so
 ZAI_ENV = "1"
 ZAI_HYBRID = "musl+relibc"
 ZAI_NO_FHS = "1"
+# The one canonical, resolved path to `sh` — anything that generates a
+# shebang or execs a shell script explicitly should read this instead of
+# hardcoding the path, so it stays in sync if syshub's layout ever changes.
+ZAI_SH = "/overlayer/syshub/bin/sh"
 PATH = "/overlayer/syshub/bin:/overlayer/syshub/sbin:/overlayer/syshub/x86_64-zainium-linux-musl/bin:/overlayer/zexlib/union/bin"
 LD_LIBRARY_PATH = "/overlayer/syshub/lib:/overlayer/syshub/x86_64-zainium-linux-musl/lib:/overlayer/zexlib/union/lib"
 LANG = "C.UTF-8"
