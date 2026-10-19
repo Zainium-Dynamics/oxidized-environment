@@ -36,14 +36,11 @@ const ZAINIUM_DEFAULTS: &[(&str, &str)] = &[
     ),
     ("OXIDIZED_ENV", "1"),
     ("NO_FHS", "1"),
-    ("RESOLVED_SH", "/overlayer/syshub/bin/sh"),
+    ("RESOLVED_SH", "/overlayer/syshub/bin/bash"),
+    ("LD_PRELOAD", "/overlayer/syshub/lib/libsys_resolver.so"),
     (
         "PATH",
         "/overlayer/syshub/bin:/overlayer/syshub/sbin:/overlayer/syshub/x86_64-zainium-linux-musl/bin:/overlayer/zexlib/union/bin",
-    ),
-    (
-        "LD_LIBRARY_PATH",
-        "/overlayer/syshub/lib:/overlayer/syshub/x86_64-zainium-linux-musl/lib:/overlayer/zexlib/union/lib",
     ),
     ("LANG", "C.UTF-8"),
     ("LC_ALL", "C.UTF-8"),
